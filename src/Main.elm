@@ -7,6 +7,7 @@ import Html.App as App
 import Json.Decode as Decode
 import Random
 import Array
+import String
 
 
 type alias Model =
@@ -38,13 +39,6 @@ type Color
     | White
 
 
-type Place
-    = First
-    | Second
-    | Third
-    | Fourth
-
-
 type GameState
     = Won
     | Lost
@@ -54,7 +48,7 @@ type GameState
 
 type Msg
     = PickCode Code
-    | SelectColor Place Color
+    | SelectColor (Place (Maybe Color)) Color
     | MakeGuess
 
 
@@ -63,41 +57,33 @@ asList ( a, b, c, d ) =
     [ a, b, c, d ]
 
 
-places : List Place
+type alias Place a =
+    (a -> a) -> ( a, a, a, a ) -> ( a, ( a, a, a, a ) )
+
+
+first : Place a
+first fn ( a, b, c, d ) =
+    ( a, ( fn a, b, c, d ) )
+
+
+second : Place a
+second fn ( a, b, c, d ) =
+    ( b, ( a, fn b, c, d ) )
+
+
+third : Place a
+third fn ( a, b, c, d ) =
+    ( c, ( a, b, fn c, d ) )
+
+
+fourth : Place a
+fourth fn ( a, b, c, d ) =
+    ( d, ( a, b, c, fn d ) )
+
+
+places : List (Place a)
 places =
-    [ First, Second, Third, Fourth ]
-
-
-get : Place -> ( a, a, a, a ) -> a
-get place ( a, b, c, d ) =
-    case place of
-        First ->
-            a
-
-        Second ->
-            b
-
-        Third ->
-            c
-
-        Fourth ->
-            d
-
-
-set : Place -> a -> ( a, a, a, a ) -> ( a, a, a, a )
-set place x ( a, b, c, d ) =
-    case place of
-        First ->
-            ( x, b, c, d )
-
-        Second ->
-            ( a, x, c, d )
-
-        Third ->
-            ( a, b, x, d )
-
-        Fourth ->
-            ( a, b, c, x )
+    [ first, second, third, fourth ]
 
 
 full : PartialCode -> Maybe Code
@@ -119,7 +105,7 @@ update msg model =
             )
 
         SelectColor place color ->
-            ( { model | currentGuess = set place (Just color) model.currentGuess }
+            ( { model | currentGuess = snd <| place (\_ -> Just color) model.currentGuess }
             , Cmd.none
             )
 
@@ -180,25 +166,32 @@ view : Model -> Html.Html Msg
 view { solution, currentGuess, guesses } =
     Html.div
         []
-        [ guessLogView guesses
+        [ guessLogView solution guesses
         , currentGuesView currentGuess
         , guessButtonView
         , solutionView solution
         ]
 
 
-guessLogView : List Code -> Html.Html Msg
-guessLogView guesses =
+guessLogView : Solution -> List Code -> Html.Html Msg
+guessLogView solution guesses =
     Html.ul
         []
-        (List.map guessView guesses)
+        (List.map (guessView solution) guesses)
 
 
-guessView : Code -> Html.Html Msg
-guessView code =
+guessView : Solution -> Code -> Html.Html Msg
+guessView solution code =
     Html.li
         []
-        (List.map colorView (asList code))
+        ((List.map colorView (asList code))
+            ++ [ hintView solution code ]
+        )
+
+
+hintView : Solution -> Code -> Html.Html Msg
+hintView solution code =
+    Html.text ((String.repeat (exactMatches solution code) "+") ++ (String.repeat (partialMatches solution code) "-"))
 
 
 colorView : Color -> Html.Html Msg
@@ -220,7 +213,7 @@ currentGuesView guess =
         (List.map2 colorSelect places (asList guess))
 
 
-colorSelect : Place -> Maybe Color -> Html.Html Msg
+colorSelect : Place (Maybe Color) -> Maybe Color -> Html.Html Msg
 colorSelect place currentColor =
     Html.select
         [ Events.on "change"
@@ -297,3 +290,63 @@ solutionView solution =
 
         Picked code ->
             Html.text <| toString code
+
+
+exactMatches : Solution -> Code -> Int
+exactMatches solution code =
+    case solution of
+        Unpicked ->
+            0
+
+        Picked solutionCode ->
+            List.map2 (==) (asList solutionCode) (asList code)
+                |> countTrue
+
+
+partialMatches : Solution -> Code -> Int
+partialMatches solution code =
+    case solution of
+        Unpicked ->
+            0
+
+        Picked solutionCode ->
+            List.map (partialMatchesForColor solutionCode code) colors
+                |> List.sum
+
+
+partialMatchesForColor : Code -> Code -> Color -> Int
+partialMatchesForColor solutionCode code color =
+    if (List.member color (asList solutionCode)) then
+        let
+            exactMatches =
+                exactMatchesForColor solutionCode code color
+        in
+            min (countColorsIn color code) (countColorsIn color solutionCode)
+                |> (+) -exactMatches
+    else
+        0
+
+
+countTrue : List Bool -> Int
+countTrue bools =
+    List.map
+        (\bool ->
+            if bool then
+                1
+            else
+                0
+        )
+        bools
+        |> List.sum
+
+
+exactMatchesForColor : Code -> Code -> Color -> Int
+exactMatchesForColor solutionCode code color =
+    List.map2 (\color1 color2 -> (color == color1) && (color == color2)) (asList solutionCode) (asList code)
+        |> countTrue
+
+
+countColorsIn : Color -> Code -> Int
+countColorsIn color code =
+    List.map ((==) color) (asList code)
+        |> countTrue
