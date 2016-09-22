@@ -4,6 +4,7 @@ import Html
 import Html.Attributes as Attributes
 import Html.Events as Events
 import Html.App as App
+import Json.Decode as Decode
 import Random
 import Array
 
@@ -54,6 +55,59 @@ type GameState
 type Msg
     = PickCode Code
     | SelectColor Place Color
+    | MakeGuess
+
+
+asList : ( a, a, a, a ) -> List a
+asList ( a, b, c, d ) =
+    [ a, b, c, d ]
+
+
+places : List Place
+places =
+    [ First, Second, Third, Fourth ]
+
+
+get : Place -> ( a, a, a, a ) -> a
+get place ( a, b, c, d ) =
+    case place of
+        First ->
+            a
+
+        Second ->
+            b
+
+        Third ->
+            c
+
+        Fourth ->
+            d
+
+
+set : Place -> a -> ( a, a, a, a ) -> ( a, a, a, a )
+set place x ( a, b, c, d ) =
+    case place of
+        First ->
+            ( x, b, c, d )
+
+        Second ->
+            ( a, x, c, d )
+
+        Third ->
+            ( a, b, x, d )
+
+        Fourth ->
+            ( a, b, c, x )
+
+
+full : PartialCode -> Maybe Code
+full partialCode =
+    case partialCode of
+        ( Just a, Just b, Just c, Just d ) ->
+            Just ( a, b, c, d )
+
+        _ ->
+            Nothing
 
 
 update : Msg -> Model -> ( Model, Cmd a )
@@ -65,23 +119,17 @@ update msg model =
             )
 
         SelectColor place color ->
-            ({ model | currentGuess = modifyGuess place color model.currentGuess })
+            ( { model | currentGuess = set place (Just color) model.currentGuess }
+            , Cmd.none
+            )
 
+        MakeGuess ->
+            case (full model.currentGuess) of
+                Nothing ->
+                    ( model, Cmd.none )
 
-modifyGuess : Place -> Color -> PartialCode -> PartialCode
-modifyGuess place color ( first, second, third, fourth ) =
-    case place of
-        First ->
-            ( color, second, third, fourth )
-
-        Second ->
-            ( first, color, third, fourth )
-
-        Third ->
-            ( first, second, color, fourth )
-
-        Fourth ->
-            ( first, second, third, color )
+                Just code ->
+                    ( { model | currentGuess = emptyGuess, guesses = model.guesses ++ [ code ] }, Cmd.none )
 
 
 colors : List Color
@@ -129,34 +177,116 @@ main =
 
 
 view : Model -> Html.Html Msg
-view { solution } =
+view { solution, currentGuess, guesses } =
     Html.div
         []
-        [ guessView
+        [ guessLogView guesses
+        , currentGuesView currentGuess
+        , guessButtonView
         , solutionView solution
         ]
 
 
-guessView : Html.Html Msg
-guessView =
+guessLogView : List Code -> Html.Html Msg
+guessLogView guesses =
+    Html.ul
+        []
+        (List.map guessView guesses)
+
+
+guessView : Code -> Html.Html Msg
+guessView code =
+    Html.li
+        []
+        (List.map colorView (asList code))
+
+
+colorView : Color -> Html.Html Msg
+colorView =
+    (toString >> Html.text)
+
+
+guessButtonView : Html.Html Msg
+guessButtonView =
+    Html.button
+        [ Events.onClick MakeGuess ]
+        [ Html.text "Guess!" ]
+
+
+currentGuesView : PartialCode -> Html.Html Msg
+currentGuesView guess =
     Html.div
         []
-        (List.repeat 4 colorSelect)
+        (List.map2 colorSelect places (asList guess))
 
 
-colorSelect : Html.Html Msg
-colorSelect =
+colorSelect : Place -> Maybe Color -> Html.Html Msg
+colorSelect place currentColor =
     Html.select
-        [ Html.Events.on "change" (Json.Decode.at [ "target", "value" ]) SelectColor
+        [ Events.on "change"
+            (Decode.at [ "target", "value" ] Decode.string
+                |> Decode.map (colorFromString >> (SelectColor place))
+            )
         ]
-        (List.map colorOption colors)
+        ((unpickedOption currentColor) :: (List.map (colorOption currentColor) colors))
 
 
-colorOption : Color -> Html.Html Msg
-colorOption color =
+unpickedOption : Maybe Color -> Html.Html Msg
+unpickedOption maybeSelectedColor =
     Html.option
-        [ Attributes.value (toString color) ]
-        [ (Html.text <| toString color) ]
+        [ Attributes.value "unpicked"
+        , Attributes.selected
+            (case maybeSelectedColor of
+                Just _ ->
+                    False
+
+                Nothing ->
+                    True
+            )
+        ]
+        [ Html.text "" ]
+
+
+colorFromString : String -> Color
+colorFromString colorString =
+    case colorString of
+        "Red" ->
+            Red
+
+        "Yellow" ->
+            Yellow
+
+        "Blue" ->
+            Blue
+
+        "Green" ->
+            Green
+
+        "Purple" ->
+            Purple
+
+        "White" ->
+            White
+
+        -- We need some fallback to make the compiler happy
+        _ ->
+            Red
+
+
+colorOption : Maybe Color -> Color -> Html.Html Msg
+colorOption maybeSelectedColor ownColor =
+    Html.option
+        [ Attributes.value (toString ownColor)
+        , Attributes.selected
+            (case maybeSelectedColor of
+                Just selectedColor ->
+                    selectedColor == ownColor
+
+                Nothing ->
+                    False
+            )
+        ]
+        [ (Html.text <| toString ownColor) ]
 
 
 solutionView : Solution -> Html.Html Msg
